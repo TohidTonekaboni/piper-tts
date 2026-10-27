@@ -6,3 +6,5 @@ venv/
 .DS_Store
 dataset/texts/
 dataset/voices/
+dataset/wavs/
+dataset/metadata.csv
