@@ -1,8 +1,9 @@
 """Download audio + Farsi subtitles for every YouTube URL in dataset/source.json.
 
 Audio  -> dataset/voices/<video_id>.wav
-Text   -> dataset/texts/<video_id>.txt, one subtitle per line: `start|end|text`
-          (start/end in seconds from the beginning of the audio)
+Text   -> dataset/texts/<video_id>.txt, one subtitle per line: `start|end|speaker|text`
+          (start/end in seconds from the beginning of the audio; speaker is the
+          entry's "speaker" value from source.json)
 After each URL succeeds, its entry in source.json gets `voice_name` and `text_name`
 filled in. Entries that already have both (and the files exist) are skipped, so the
 script can be interrupted and re-run to continue where it stopped.
@@ -76,8 +77,8 @@ def parse_cues(path):
         yield cue
 
 
-def vtt_to_text(path):
-    """Return one `start|end|text` line per subtitle (times in seconds).
+def vtt_to_text(path, speaker):
+    """Return one `start|end|speaker|text` line per subtitle (times in seconds).
 
     YouTube auto-captions repeat the previous line inside the next cue (rolling
     captions); a repeated line is merged into the original one instead of being
@@ -99,10 +100,13 @@ def vtt_to_text(path):
                 entries.append(e)
             cur[line] = e
         prev = cur
-    return "".join(f"{s:.3f}|{e:.3f}|{t}\n" for s, e, t in entries)
+    return "".join(f"{s:.3f}|{e:.3f}|{speaker}|{t}\n" for s, e, t in entries)
 
 
 def process(entry, work, auth):
+    speaker = str(entry.get("speaker", "")).strip()
+    if not speaker or "|" in speaker:
+        raise RuntimeError('entry needs a "speaker" without "|" in source.json')
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(work / "%(id)s.%(ext)s"),
@@ -129,7 +133,7 @@ def process(entry, work, auth):
     if not subs:
         raise RuntimeError(f"no '{LANG}' subtitles available")
 
-    text = vtt_to_text(subs[0])
+    text = vtt_to_text(subs[0], speaker)
     if not text.strip():
         raise RuntimeError("subtitle file is empty")
 

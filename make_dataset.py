@@ -1,8 +1,8 @@
 """Turn downloaded voices + timestamped texts into a Piper (LJSpeech-style) dataset.
 
-Reads  dataset/voices/<video_id>.wav and dataset/texts/<video_id>.txt (`start|end|text`).
+Reads  dataset/voices/<video_id>.wav and dataset/texts/<video_id>.txt (`start|end|speaker|text`).
 Writes dataset/wavs/<video_id>_<n>.wav (one clip per merged subtitle group)
-       dataset/metadata.csv            (`clip_id|text`, no extension in the id)
+       dataset/metadata.csv            (`clip_id|speaker|text`, no extension in the id)
 
 Usage: python make_dataset.py [dataset_dir]
 """
@@ -37,12 +37,16 @@ def normalize(text):
 
 
 def read_subtitles(path):
-    subs = []
+    """Return ([(start, end, text)], speaker) for one text file."""
+    subs, speakers = [], set()
     for line in path.read_text(encoding="utf-8").splitlines():
-        parts = line.split("|", 2)
-        if len(parts) == 3:
-            subs.append((float(parts[0]), float(parts[1]), parts[2]))
-    return subs
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            subs.append((float(parts[0]), float(parts[1]), parts[3]))
+            speakers.add(parts[2])
+    if len(speakers) != 1:
+        raise ValueError(f"{path.name}: expected one speaker, found {sorted(speakers)}")
+    return subs, speakers.pop()
 
 
 def group_subtitles(subs):
@@ -68,6 +72,7 @@ def main():
     shutil.rmtree(WAVS, ignore_errors=True)  # fully generated, rebuilt each run
     WAVS.mkdir(parents=True)
 
+    speakers = set()
     rows, total_sec, skipped = [], 0.0, {"short": 0, "long": 0, "unusable text": 0}
     for txt in sorted(TEXTS.glob("*.txt")):
         voice = VOICES / f"{txt.stem}.wav"
@@ -80,8 +85,9 @@ def main():
         frame_bytes = params.nchannels * params.sampwidth
         n_frames = len(frames) // frame_bytes
 
+        subs, speaker = read_subtitles(txt)
         n = 0
-        for start, end, parts in group_subtitles(read_subtitles(txt)):
+        for start, end, parts in group_subtitles(subs):
             text = normalize(" ".join(parts))
             if end - start < DROP_BELOW:
                 skipped["short"] += 1
@@ -97,12 +103,13 @@ def main():
                 with wave.open(str(WAVS / f"{clip_id}.wav"), "wb") as dst:
                     dst.setparams(params)
                     dst.writeframes(frames[a * frame_bytes:b * frame_bytes])
-                rows.append(f"{clip_id}|{text}\n")
+                rows.append(f"{clip_id}|{speaker}|{text}\n")
                 total_sec += end - start
-        print(f"{txt.stem}: {n} clips")
+        speakers.add(speaker)
+        print(f"{txt.stem}: {n} clips ({speaker})")
 
     METADATA.write_text("".join(rows), encoding="utf-8")
-    print(f"{len(rows)} clips, {total_sec / 3600:.2f} h -> {METADATA}")
+    print(f"{len(rows)} clips, {total_sec / 3600:.2f} h, {len(speakers)} speakers -> {METADATA}")
     print("skipped:", ", ".join(f"{k}={v}" for k, v in skipped.items()))
 
 
